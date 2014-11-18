@@ -1,13 +1,8 @@
-﻿namespace RedisSessionProvider.Config
+﻿using RedisSessionProvider.Serialization;
+using System;
+
+namespace RedisSessionProvider.Config
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Linq;
-    using System.Text;
-    using System.Threading.Tasks;
-
-    using RedisSessionProvider.Serialization;
-
     public static class RedisSerializationConfig
     {
         static RedisSerializationConfig()
@@ -26,5 +21,11 @@
         ///     exception, helpful for tracking down incompatible types if they exist.
         /// </summary>
         public static Action<Exception> SerializerExceptionLoggingDel { get; set; }
+
+        public static void LogSerializationException(Exception e)
+        {
+            if (SerializerExceptionLoggingDel != null)
+                SerializerExceptionLoggingDel(e);
+        }
     }
 }

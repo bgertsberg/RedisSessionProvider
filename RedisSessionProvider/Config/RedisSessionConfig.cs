@@ -42,6 +42,12 @@
         /// </summary>
         public static Action<Exception> SessionExceptionLoggingDel { get; set; }
 
+        public static void LogSessionException(Exception ex)
+        {
+            if (SessionExceptionLoggingDel != null)
+                SessionExceptionLoggingDel(ex);
+        }
+
         /// <summary>
         /// A delegate that is fired when RedisSessionAccessor encounters an exception getting a Session
         /// </summary>

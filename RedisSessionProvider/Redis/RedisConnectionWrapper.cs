@@ -1,24 +1,17 @@
-﻿namespace RedisSessionProvider.Redis
+﻿using RedisSessionProvider.Config;
+using StackExchange.Redis;
+using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Linq;
+using System.Timers;
+
+namespace RedisSessionProvider.Redis
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Collections.Concurrent;
-    using System.Configuration;
-    using System.Linq;
-    using System.Threading;
-    using System.Threading.Tasks;
-    using System.Timers;
-    using System.Web;
-
-    using StackExchange.Redis;
-    using RedisSessionProvider.Config;
-
     public sealed class RedisConnectionWrapper
     {
-        private static Dictionary<string, ConnectionMultiplexer> RedisConnections =
-            new Dictionary<string, ConnectionMultiplexer>();
-        private static Dictionary<string, long> RedisStats =
-            new Dictionary<string, long>();
+        private static Dictionary<string, ConnectionMultiplexer> RedisConnections =new Dictionary<string, ConnectionMultiplexer>();
+        private static Dictionary<string, long> RedisStats =new Dictionary<string, long>();
         
         private static System.Timers.Timer connMessagesSentTimer;
         
@@ -57,10 +50,12 @@
         {
             this.connData = ConfigurationOptions.Parse(srvAddr + ":" + srvPort);
 
-            this.ConnectionID = string.Format(
-                    "{0}_%_{1}",
-                    srvAddr,
-                    srvPort);
+            this.ConnectionID = GetConnectionID(srvAddr, srvPort);
+        }
+
+        private static string GetConnectionID(string srvAddr, int srvPort)
+        {
+            return string.Format("{0}_%_{1}", srvAddr, srvPort);
         }
         
         /// <summary>
@@ -71,17 +66,11 @@
         public RedisConnectionWrapper(RedisConnectionParameters redisParams)
         {
             if (redisParams == null)
-            {
-                throw new ConfigurationErrorsException(
-                    "RedisConnectionWrapper cannot be initialized with null RedisConnectionParameters property");
-            }
+                throw new ConfigurationErrorsException("RedisConnectionWrapper cannot be initialized with null RedisConnectionParameters property");
 
             this.connData = redisParams.TranslateToConfigOpts();
 
-            this.ConnectionID = string.Format(
-                    "{0}_%_{1}",
-                    redisParams.ServerAddress,
-                    redisParams.ServerPort);
+            this.ConnectionID = GetConnectionID(redisParams.ServerAddress, redisParams.ServerPort);
             this.DatabaseIndex = redisParams.DatabaseIndex;
         }
 
@@ -108,10 +97,7 @@
         public RedisConnectionWrapper(string connIdentifier, int dbIndex, ConfigurationOptions connOpts)
         {
             if (connOpts == null)
-            {
-                throw new ConfigurationErrorsException(
-                    "RedisConnectionWrapper cannot be initialized with null ConfigurationOptions property");
-            }
+                throw new ConfigurationErrorsException("RedisConnectionWrapper cannot be initialized with null ConfigurationOptions property");
 
             this.connData = connOpts;
             this.DatabaseIndex = dbIndex;
@@ -127,21 +113,13 @@
         public IDatabase GetConnection()
         {
             if (!RedisConnectionWrapper.RedisConnections.ContainsKey(this.ConnectionID))
-            {
                 lock(RedisConnectionWrapper.RedisCreateLock)
                 {
                     if (!RedisConnectionWrapper.RedisConnections.ContainsKey(this.ConnectionID))
-                    {
-                        RedisConnectionWrapper.RedisConnections.Add(
-                            this.ConnectionID,
-                            ConnectionMultiplexer.Connect(
-                                this.connData));
-                    }
+                        RedisConnectionWrapper.RedisConnections.Add(this.ConnectionID,ConnectionMultiplexer.Connect(this.connData));
                 }
-            }
 
-            return RedisConnectionWrapper.RedisConnections[this.ConnectionID].GetDatabase(
-                this.DatabaseIndex);
+            return RedisConnectionWrapper.RedisConnections[this.ConnectionID].GetDatabase(this.DatabaseIndex);
         }
         
         /// <summary>
@@ -152,38 +130,30 @@
         /// <param name="e"></param>
         public static void GetConnectionsMessagesSent(object sender, ElapsedEventArgs e)
         {
-            bool logCount = RedisConnectionConfig.LogConnectionActionsCountDel != null;
-
-            if (logCount)
-            {
+            if (RedisConnectionConfig.LogConnectionActionsCountDel != null)
                 foreach (string connName in RedisConnectionWrapper.RedisConnections.Keys.ToList())
-                {
                     try
                     {
-                        ConnectionMultiplexer conn;
-                        if (RedisConnectionWrapper.RedisConnections.TryGetValue(connName, out conn))
-                        {
-                            long priorPeriodCount = 0;
-                            if (RedisConnectionWrapper.RedisStats.ContainsKey(connName))
-                            {
-                                priorPeriodCount = RedisConnectionWrapper.RedisStats[connName];
-                            }
-
-                            ServerCounters counts = conn.GetCounters();
-                            long curCount = counts.Interactive.OperationCount;
-
-                            // log the sent commands
-                            RedisConnectionConfig.LogConnectionActionsCountDel(
-                                connName, 
-                                curCount - priorPeriodCount);
-
-                            RedisConnectionWrapper.RedisStats[connName] = curCount;
-                        }
+                        LogConnectionStatistics(connName);
                     }
                     catch (Exception)
                     {
                     }
-                }
+         }
+
+        private static void LogConnectionStatistics(string connName)
+        {
+            ConnectionMultiplexer conn;
+            if (RedisConnectionWrapper.RedisConnections.TryGetValue(connName, out conn))
+            {
+                long priorPeriodCount = RedisConnectionWrapper.RedisStats.ContainsKey(connName) ? RedisConnectionWrapper.RedisStats[connName] : 0;
+
+                long curCount = conn.GetCounters().Interactive.OperationCount;
+
+                // log the sent commands
+                RedisConnectionConfig.LogConnectionActionsCountDel(connName, curCount - priorPeriodCount);
+
+                RedisConnectionWrapper.RedisStats[connName] = curCount;
             }
         }
     }

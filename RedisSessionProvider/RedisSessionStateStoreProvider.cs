@@ -1,25 +1,19 @@
-﻿namespace RedisSessionProvider
-{
-    using System;
-    using System.Collections.Concurrent;
-    using System.Collections.Generic;
-    using System.Collections.Specialized;
-    using System.Configuration;
-    using System.Diagnostics;
-    using System.Linq;
-    using System.Text;
-    using System.Threading.Tasks;
-    using System.Web;
-    using System.Web.Configuration;
-    using System.Web.Hosting;
-    using System.Web.SessionState;
-    using System.Web.UI;
+﻿using RedisSessionProvider.Config;
+using RedisSessionProvider.Redis;
+using RedisSessionProvider.Serialization;
+using StackExchange.Redis;
+using System;
+using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Configuration;
+using System.Web;
+using System.Web.Configuration;
+using System.Web.Hosting;
+using System.Web.SessionState;
 
-    using RedisSessionProvider.Config;
-    using RedisSessionProvider.Redis;
-    using RedisSessionProvider.Serialization;
-    using StackExchange.Redis;
-    
+namespace RedisSessionProvider
+{
+
     /// <summary>
     /// This class is the main entry point into RedisSessionProvider for your application. To enable
     ///     it, change your SessionState web.config element to specify this class as the provider
@@ -69,9 +63,9 @@
             System.Configuration.Configuration webCfg = WebConfigurationManager.OpenWebConfiguration(
                 HostingEnvironment.ApplicationVirtualPath);
             SessionStateSection sessCfg = (SessionStateSection)webCfg.GetSection("system.web/sessionState");
-            
+
             this.SessionTimeout = sessCfg.Timeout;
-            
+
             this.cereal = RedisSerializationConfig.SessionDataSerializer;
         }
 
@@ -83,10 +77,7 @@
         /// <returns>A SessionStateStoreData object containing Session keys and properties</returns>
         public override SessionStateStoreData CreateNewStoreData(HttpContext context, int timeout)
         {
-            return new SessionStateStoreData(
-                new RedisSessionStateItemCollection(),
-                SessionStateUtility.GetSessionStaticObjects(context),
-                timeout);
+            return new SessionStateStoreData(new RedisSessionStateItemCollection(), SessionStateUtility.GetSessionStaticObjects(context), timeout);
         }
 
         /// <summary>
@@ -158,12 +149,8 @@
         {
             // if, for some reason, we are in this method we still want to record that we are no
             //      longer going to use a session in local cache
-            string currentRedisHashId = RedisSessionStateStoreProvider.RedisHashIdFromSessionId(
-                    new HttpContextWrapper(context),
-                    id);
-
             LocalSharedSessionDictionary sharedSessDict = new LocalSharedSessionDictionary();
-            sharedSessDict.GetSessionForEndRequest(currentRedisHashId);
+            sharedSessDict.GetSessionForEndRequest(RedisHashIdFromSessionId(new HttpContextWrapper(context), id));
         }
 
         /// <summary>
@@ -187,35 +174,21 @@
 
             try
             {
-                string parsedRedisHashId = RedisSessionStateStoreProvider.RedisHashIdFromSessionId(
-                    new HttpContextWrapper(context),
-                    id);
-
-                LocalSharedSessionDictionary sharedSessDict = new LocalSharedSessionDictionary();
-            
-                RedisSessionStateItemCollection items = sharedSessDict.GetSessionForBeginRequest(
-                    parsedRedisHashId,
-                    (redisKey) => {
-                        return RedisSessionStateStoreProvider.GetItemFromRedis(
-                            redisKey, 
-                            new HttpContextWrapper(context),
-                            this.SessionTimeout);
-                    });
-
-                return new SessionStateStoreData(
-                    items,
-                    SessionStateUtility.GetSessionStaticObjects(context),
-                    Convert.ToInt32(this.SessionTimeout.TotalMinutes));
+                return new SessionStateStoreData(GetSessionItems(context, id), SessionStateUtility.GetSessionStaticObjects(context), Convert.ToInt32(this.SessionTimeout.TotalMinutes));
             }
-            catch(Exception e)
+            catch (Exception e)
             {
-                if (RedisSessionConfig.SessionExceptionLoggingDel != null)
-                {
-                    RedisSessionConfig.SessionExceptionLoggingDel(e);
-                }
+                RedisSessionConfig.LogSessionException(e);
             }
 
-            return this.CreateNewStoreData(context, Convert.ToInt32(this.SessionTimeout.TotalMinutes));
+            return CreateNewStoreData(context, Convert.ToInt32(this.SessionTimeout.TotalMinutes));
+        }
+
+        private static RedisSessionStateItemCollection GetSessionItems(HttpContext context, string id)
+        {
+            var sharedSessDict = new LocalSharedSessionDictionary();
+
+            return sharedSessDict.GetSessionItems(new HttpContextWrapper(context), RedisHashIdFromSessionId(new HttpContextWrapper(context), id));
         }
 
         /// <summary>
@@ -243,16 +216,11 @@
         /// <param name="item">The Session's properties</param>
         public override void RemoveItem(HttpContext context, string id, object lockId, SessionStateStoreData item)
         {
-            RedisConnectionWrapper rConnWrap = RedisSessionStateStoreProvider.RedisConnWrapperFromContext(
-                new HttpContextWrapper(context));
+            RedisConnectionWrapper rConnWrap = RedisConnWrapperFromContext(new HttpContextWrapper(context));
 
             IDatabase redisConn = rConnWrap.GetConnection();
 
-            redisConn.KeyDelete(
-                RedisSessionStateStoreProvider.RedisHashIdFromSessionId(
-                    new HttpContextWrapper(context), 
-                    id),
-                CommandFlags.FireAndForget);
+            redisConn.KeyDelete(RedisHashIdFromSessionId(new HttpContextWrapper(context), id), CommandFlags.FireAndForget);
         }
 
         /// <summary>
@@ -277,38 +245,22 @@
         {
             try
             {
-                string currentRedisHashId = RedisSessionStateStoreProvider.RedisHashIdFromSessionId(
-                    new HttpContextWrapper(context), 
-                    id);
+                string currentRedisHashId = RedisHashIdFromSessionId(new HttpContextWrapper(context), id);
 
                 LocalSharedSessionDictionary sharedSessDict = new LocalSharedSessionDictionary();
-                RedisSessionStateItemCollection redisItems = 
-                    sharedSessDict.GetSessionForEndRequest(currentRedisHashId);
 
                 // we were unable to pull it from shared cache, meaning either this is the first request or
                 //      something went wrong with the local cache. We still have all the parts needed to write
                 //      to redis, however, by looking at SessionStateStoreData passed in from the Session module
                 //      and the current hash key provided by the id parameter.
-                if (redisItems == null)
-                {
-                    redisItems = (RedisSessionStateItemCollection)item.Items;
-                }
+                var redisItems = sharedSessDict.GetSessionForEndRequest(currentRedisHashId) ?? (RedisSessionStateItemCollection)item.Items;
 
                 if (redisItems != null)
-                {
-                    RedisSessionStateStoreProvider.SerializeToRedis(
-                        new HttpContextWrapper(context),
-                        redisItems,
-                        currentRedisHashId,
-                        this.SessionTimeout);
-                }
+                    SerializeToRedis(new HttpContextWrapper(context), redisItems, currentRedisHashId, this.SessionTimeout);
             }
             catch (Exception e)
             {
-                if (RedisSessionConfig.SessionExceptionLoggingDel != null)
-                {
-                    RedisSessionConfig.SessionExceptionLoggingDel(e);
-                }
+                RedisSessionConfig.LogSessionException(e);
             }
         }
 
@@ -318,13 +270,9 @@
         /// <param name="redisKey">The key of the Redis hash</param>
         /// <param name="context">The HttpContext of the current web request</param>
         /// <returns>An instance of RedisSessionStateItemCollection, may be empty if Redis call fails</returns>
-        public static RedisSessionStateItemCollection GetItemFromRedis(
-            string redisKey, 
-            HttpContextBase context,
-            TimeSpan expirationTimeout)
+        public static RedisSessionStateItemCollection GetItemFromRedis(string redisKey, HttpContextBase context, TimeSpan expirationTimeout)
         {
-            RedisConnectionWrapper rConnWrap = RedisSessionStateStoreProvider.RedisConnWrapperFromContext(
-                context);
+            RedisConnectionWrapper rConnWrap = RedisSessionStateStoreProvider.RedisConnWrapperFromContext(context);
 
             IDatabase redisConn = rConnWrap.GetConnection();
 
@@ -334,17 +282,11 @@
 
                 redisConn.KeyExpire(redisKey, expirationTimeout, CommandFlags.FireAndForget);
 
-                return new RedisSessionStateItemCollection(
-                    redisData,
-                    rConnWrap.ConnectionID, 
-                    0);
+                return new RedisSessionStateItemCollection(redisData, rConnWrap.ConnectionID, 0);
             }
             catch (Exception e)
             {
-                if (RedisSessionConfig.SessionExceptionLoggingDel != null)
-                {
-                    RedisSessionConfig.SessionExceptionLoggingDel(e);
-                }
+                RedisSessionConfig.LogSessionException(e);
             }
 
             return new RedisSessionStateItemCollection();
@@ -359,78 +301,45 @@
         /// <param name="deletedObjects">keys that were deleted during the current HttpContext</param>
         /// <param name="currentRedisHashId">The current Redis key name</param>
         /// <param name="redisConn">A connection to Redis</param>
-        public static void SerializeToRedis(
-            HttpContextBase context,
-            RedisSessionStateItemCollection redisItems,
-            string currentRedisHashId,
-            TimeSpan expirationTimeout)
+        public static void SerializeToRedis(HttpContextBase context, RedisSessionStateItemCollection redisItems, string currentRedisHashId, TimeSpan expirationTimeout)
         {
-            List<HashEntry> setItems = new List<HashEntry>();
-            List<RedisValue> delItems = new List<RedisValue>();
+            
+            RedisConnectionWrapper rConnWrap = RedisSessionStateStoreProvider.RedisConnWrapperFromContext(context);
 
-            RedisConnectionWrapper rConnWrap = RedisSessionStateStoreProvider.RedisConnWrapperFromContext(
-                context);
+            var setItems = new List<HashEntry>();
+            var delItems = new List<RedisValue>();
 
             // Determine if we are adding or removing keys, separate them into their own lists
             //      note that redisItems.GetChangedObjectsEnumerator contains complex logic
-            foreach (KeyValuePair<string, string> changedObj in
-                redisItems.GetChangedObjectsEnumerator())
-            {
+            foreach (KeyValuePair<string, string> changedObj in redisItems.GetChangedObjectsEnumerator())
                 if (changedObj.Value != null)
-                {
-                    setItems.Add(
-                        new HashEntry(
-                            changedObj.Key,
-                            changedObj.Value));
-                }
+                    setItems.Add(new HashEntry(changedObj.Key, changedObj.Value));
                 else
-                {
                     delItems.Add(changedObj.Key);
-                }
-            }
 
             IDatabase redisConn = rConnWrap.GetConnection();
 
             if (setItems.Count > 0)
             {
                 HashEntry[] writeItems = setItems.ToArray();
-                redisConn.HashSet(
-                    currentRedisHashId,
-                    writeItems,
-                    CommandFlags.FireAndForget);
+                redisConn.HashSet(currentRedisHashId, writeItems, CommandFlags.FireAndForget);
 
                 // call appropriate delegate if set for changing keys
-                if(RedisSessionConfig.RedisWriteFieldDel != null)
-                {
-                    RedisSessionConfig.RedisWriteFieldDel(
-                        context, 
-                        writeItems, 
-                        currentRedisHashId);
-                }
+                if (RedisSessionConfig.RedisWriteFieldDel != null)
+                    RedisSessionConfig.RedisWriteFieldDel(context, writeItems, currentRedisHashId);
             }
             if (delItems != null && delItems.Count > 0)
             {
                 RedisValue[] removeItems = delItems.ToArray();
-                redisConn.HashDelete(
-                    currentRedisHashId,
-                    removeItems,
-                    CommandFlags.FireAndForget);
+                redisConn.HashDelete(currentRedisHashId, removeItems, CommandFlags.FireAndForget);
 
                 // call appropriate delegate if set for removing keys
-                if(RedisSessionConfig.RedisRemoveFieldDel != null)
-                {
-                    RedisSessionConfig.RedisRemoveFieldDel(
-                        context,
-                        removeItems,
-                        currentRedisHashId);
-                }
+                if (RedisSessionConfig.RedisRemoveFieldDel != null)
+                    RedisSessionConfig.RedisRemoveFieldDel(context, removeItems, currentRedisHashId);
             }
 
             // always refresh the timeout of the session hash
-            redisConn.KeyExpire(
-                currentRedisHashId,
-                expirationTimeout,
-                CommandFlags.FireAndForget);
+            redisConn.KeyExpire(currentRedisHashId, expirationTimeout, CommandFlags.FireAndForget);
         }
 
         /// <summary>
@@ -444,34 +353,22 @@
         /// </returns>
         public static RedisConnectionWrapper RedisConnWrapperFromContext(HttpContextBase context)
         {
-            if(RedisConnectionConfig.GetSERedisServerConfigDbIndex != null)
+            if (RedisConnectionConfig.GetSERedisServerConfigDbIndex != null)
             {
-                Tuple<string, int, ConfigurationOptions> connData =
-                    RedisConnectionConfig.GetSERedisServerConfigDbIndex(context);
-                return new RedisConnectionWrapper(
-                    connData.Item1,
-                    connData.Item2,
-                    connData.Item3);
+                var connData = RedisConnectionConfig.GetSERedisServerConfigDbIndex(context);
+                return new RedisConnectionWrapper(connData.Item1, connData.Item2, connData.Item3);
             }
-            else if(RedisConnectionConfig.GetSERedisServerConfig != null)
+            else if (RedisConnectionConfig.GetSERedisServerConfig != null)
             {
-                KeyValuePair<string, ConfigurationOptions> connData = 
-                    RedisConnectionConfig.GetSERedisServerConfig(context);
-                return new RedisConnectionWrapper(
-                    connData.Key,
-                    connData.Value);
+                var connData = RedisConnectionConfig.GetSERedisServerConfig(context);
+                return new RedisConnectionWrapper(connData.Key, connData.Value);
             }
 #pragma warning disable 0618
-            else if(RedisConnectionConfig.GetRedisServerAddress != null)
-            {
-                return new RedisConnectionWrapper(
-                    RedisConnectionConfig.GetRedisServerAddress(context));
-            }
+            else if (RedisConnectionConfig.GetRedisServerAddress != null)
+                return new RedisConnectionWrapper(RedisConnectionConfig.GetRedisServerAddress(context));
 #pragma warning restore 0618
 
-            throw new ConfigurationErrorsException(
-                "RedisSessionProvider.Config.RedisConnectionWrapper.GetSERedisServerConfig delegate not set " +
-                "see project page at: github.com/welegan/RedisSessionProvider#configuring-your-specifics");
+            throw new ConfigurationErrorsException("RedisSessionProvider.Config.RedisConnectionWrapper.GetSERedisServerConfig delegate not set \n see project page at: github.com/welegan/RedisSessionProvider#configuring-your-specifics");
         }
 
         /// <summary>
@@ -482,14 +379,7 @@
         /// <returns>A string which is the address of the Session in Redis</returns>
         public static string RedisHashIdFromSessionId(HttpContextBase context, string sessId)
         {
-            if (RedisSessionConfig.RedisKeyFromSessionIdDel == null)
-            {
-                return sessId;
-            }
-            else
-            {
-                return RedisSessionConfig.RedisKeyFromSessionIdDel(context, sessId);
-            }
+            return (RedisSessionConfig.RedisKeyFromSessionIdDel != null) ? RedisSessionConfig.RedisKeyFromSessionIdDel(context, sessId) : sessId;
         }
     }
 }

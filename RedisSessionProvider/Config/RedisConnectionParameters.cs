@@ -1,11 +1,8 @@
-﻿namespace RedisSessionProvider.Config
+﻿using StackExchange.Redis;
+using System;
+
+namespace RedisSessionProvider.Config
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Text;
-
-    using StackExchange.Redis;
-
     /// <summary>
     /// Class that handles options for connecting to a Redis instance for RedisSessionProvider
     /// </summary>
@@ -73,24 +70,18 @@
         /// </returns>
         public ConfigurationOptions TranslateToConfigOpts()
         {
-            ConfigurationOptions connectOpts = ConfigurationOptions.Parse(
-                this.ServerAddress + ":" + this.ServerPort);
+            ConfigurationOptions connectOpts = ConfigurationOptions.Parse(string.Concat(this.ServerAddress, ":", this.ServerPort.ToString()));
 
             connectOpts.KeepAlive = this.KeepAlive;
 
             if (!string.IsNullOrEmpty(this.Password))
-            {
                 connectOpts.Password = this.Password;
-            }
+
             if (!string.IsNullOrEmpty(this.ServerVersion))
-            {
                 connectOpts.DefaultVersion = new Version(this.ServerVersion);
-            }
+
             if (this.UseProxy != Proxy.None)
-            {
-                // thanks marc gravell
                 connectOpts.Proxy = this.UseProxy;
-            }
 
             return connectOpts;
         }

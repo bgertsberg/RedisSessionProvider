@@ -1,20 +1,14 @@
-﻿namespace RedisSessionProvider
+﻿using RedisSessionProvider.Config;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading;
+using System.Timers;
+using System.Web;
+using SysTimer = System.Timers.Timer;
+
+namespace RedisSessionProvider
 {
-    using System;
-    using System.Collections.Concurrent;
-    using System.Collections.Generic;
-    using System.Linq;
-    using System.Text;
-    using System.Threading;
-    using System.Threading.Tasks;
-    using System.Timers;
-
-    using RedisSessionProvider.Config;
-    using RedisSessionProvider.Redis;
-    using RedisSessionProvider.Serialization;
-
-    using SysTimer = System.Timers.Timer;
-
     /// <summary>
     /// Class that keeps a count of the number of currently executing web requests that need 
     ///     a particular Session. When the count reaches 0, clears it from the shared in-memory
@@ -22,17 +16,12 @@
     /// </summary>
     public class LocalSharedSessionDictionary
     {
-        private static ConcurrentDictionary<string, SessionAndRefCount> localCache =
-            new ConcurrentDictionary<string, SessionAndRefCount>();
-
+        private static ConcurrentDictionary<string, LocalSessionInfo> localCache = new ConcurrentDictionary<string, LocalSessionInfo>();
         private static SysTimer cacheFreshnessTimer;
-
-        private static int cacheItemExpirationAgeMillis = 120000;
-        private static int checkCacheFreshnessInterval = 5000;
 
         static LocalSharedSessionDictionary()
         {
-            cacheFreshnessTimer = new SysTimer(checkCacheFreshnessInterval);
+            cacheFreshnessTimer = new SysTimer(TimeSpan.FromSeconds(5).TotalMilliseconds);
             cacheFreshnessTimer.Elapsed += EnsureLocalCacheFreshness;
             cacheFreshnessTimer.Start();
         }
@@ -41,34 +30,29 @@
         {
             try
             {
-                List<string> expiredKeys = new List<string>();
-
-                DateTime now = DateTime.Now;
-
-                foreach (KeyValuePair<string, SessionAndRefCount> val in LocalSharedSessionDictionary.localCache)
-                {
-                    if (val.Value.LastAccess.AddMilliseconds(cacheItemExpirationAgeMillis) < now ||
-                        val.Value.RequestReferences <= 0)
-                    {
-                        expiredKeys.Add(val.Key);
-                    }
-                }
-
-                foreach (string expKey in expiredKeys)
-                {
-                    SessionAndRefCount removed;
-                    LocalSharedSessionDictionary.localCache.TryRemove(expKey, out removed);
-                }
+                LocalSessionInfo removed;
+                foreach (string expKey in GetExpiredKeys())
+                    localCache.TryRemove(expKey, out removed);
             }
             catch (Exception sharedDictExc)
             {
-                if (RedisSessionConfig.SessionExceptionLoggingDel != null)
-                {
-                    RedisSessionConfig.SessionExceptionLoggingDel(sharedDictExc);
-                }
+                RedisSessionConfig.LogSessionException(sharedDictExc);
             }
         }
-        
+
+        private static List<string> GetExpiredKeys()
+        {
+            var expiredKeys = new List<string>();
+
+            var expiredCutOff = DateTime.Now - RedisSessionConfig.SessionTimeout;
+
+            foreach (var kv in localCache)
+                if (kv.Value.LastAccess < expiredCutOff || kv.Value.IsNotCurrentlyUsed())
+                    expiredKeys.Add(kv.Key);
+
+            return expiredKeys;
+        }
+
         /// <summary>
         /// Gets a session for a given redis ID, and increments the count of the number of requests
         ///     that have accessed this redis ID
@@ -76,26 +60,23 @@
         /// <param name="redisHashId">The id of the session in Redis</param>
         /// <param name="getDel">The delegate to run to fetch the session from Redis</param>
         /// <returns>A RedisSessionStateItemCollection for the session</returns>
-        public RedisSessionStateItemCollection GetSessionForBeginRequest(
-            string redisHashId, 
-            Func<string, RedisSessionStateItemCollection> getDel)
+ 
+        public RedisSessionStateItemCollection GetSessionItems(HttpContextBase context, string redisHashKey)
         {
-            SessionAndRefCount sessAndCount = LocalSharedSessionDictionary.localCache.AddOrUpdate(
-                redisHashId,
-                (redisKey) =>
-                {
-                    RedisSessionStateItemCollection itms = getDel(redisHashId);
+            return localCache.AddOrUpdate(redisHashKey, redisKey => CreateNewLocalSessionInfo(context, redisKey), UpdateSessionItem).SessionData;
+        }
 
-                    return new SessionAndRefCount(itms);
-                },
-                (redisKey, existingItem) => {
-                    Interlocked.Increment(ref existingItem.RequestReferences);
-                    existingItem.LastAccess = DateTime.Now;
+        private static LocalSessionInfo CreateNewLocalSessionInfo(HttpContextBase context, string redisKey)
+        {
+            return new LocalSessionInfo(RedisSessionStateStoreProvider.GetItemFromRedis(redisKey, context, RedisSessionConfig.SessionTimeout));
+        }
 
-                    return existingItem;
-                });
+        private static LocalSessionInfo UpdateSessionItem(string redisKey, LocalSessionInfo existingItem)
+        {
+            existingItem.IncrementOutstandingRequest();
+            existingItem.LastAccess = DateTime.Now;
 
-            return sessAndCount.Sess;
+            return existingItem;
         }
 
         /// <summary>
@@ -108,14 +89,14 @@
         /// <returns>A RedisSessionStateItemCollection for the session</returns>
         public RedisSessionStateItemCollection GetSessionForEndRequest(string redisHashId)
         {
-            SessionAndRefCount sessAndCount;
-            if (LocalSharedSessionDictionary.localCache.TryGetValue(redisHashId, out sessAndCount))
+            LocalSessionInfo sessionInfo;
+            if (localCache.TryGetValue(redisHashId, out sessionInfo))
             {
                 // atomically decrease ref count, and check to see if any requests outstanding
-                Interlocked.Decrement(ref sessAndCount.RequestReferences);
+                sessionInfo.DecrementOutstandingRequest();
                 // the timer will clear it out within the next 5 seconds if the count goes to 0
 
-                return sessAndCount.Sess;
+                return sessionInfo.SessionData;
             }
 
             return null;
@@ -124,13 +105,13 @@
         /// <summary>
         /// Internal class for holding a session item collection and the count of requests referecing it
         /// </summary>
-        class SessionAndRefCount
+        class LocalSessionInfo
         {
             /// <summary>
             /// Initializes a new instance of the SessionAndRefCount class with a given item collection
             /// </summary>
             /// <param name="itms">The items in a session</param>
-            public SessionAndRefCount(RedisSessionStateItemCollection itms)
+            public LocalSessionInfo(RedisSessionStateItemCollection itms)
                 : this(itms, 1)
             {
             }
@@ -141,22 +122,37 @@
             /// </summary>
             /// <param name="itms">The items in a session</param>
             /// <param name="count">The number of requests accessing this session</param>
-            public SessionAndRefCount(RedisSessionStateItemCollection itms, int count)
+            public LocalSessionInfo(RedisSessionStateItemCollection itms, int count)
             {
-                this.Sess = itms;
-                this.RequestReferences = count;
+                this.SessionData = itms;
+                this.outstandingRequests = count;
                 this.LastAccess = DateTime.Now;
+            }
+
+            public void IncrementOutstandingRequest()
+            {
+                Interlocked.Increment(ref outstandingRequests);
+            }
+
+            public void DecrementOutstandingRequest()
+            {
+                Interlocked.Decrement(ref outstandingRequests);
             }
 
             /// <summary>
             /// Gets or sets the item collection
             /// </summary>
-            public RedisSessionStateItemCollection Sess { get; set; }
+            public RedisSessionStateItemCollection SessionData { get; set; }
 
             /// <summary>
             /// The number of requests that have a reference to this session
             /// </summary>
-            public int RequestReferences;
+            private int outstandingRequests;
+
+            public bool IsNotCurrentlyUsed()
+            {
+                return outstandingRequests <= 0;
+            }
 
             /// <summary>
             /// The last time this session was accessed.

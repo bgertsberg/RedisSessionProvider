@@ -1,15 +1,10 @@
-﻿namespace RedisSessionProvider
+﻿using RedisSessionProvider.Config;
+using System;
+using System.Web;
+using System.Web.SessionState;
+
+namespace RedisSessionProvider
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Linq;
-    using System.Text;
-    using System.Threading.Tasks;
-    using System.Web;
-    using System.Web.SessionState;
-
-    using Config;
-
     public class RedisSessionAccessor : IDisposable
     {
         /// <summary>
@@ -25,45 +20,32 @@
                 this.SharedSessions = new LocalSharedSessionDictionary();
 
                 // if we have the session ID
-                if (this.RequestContext.Request.Cookies[RedisSessionConfig.SessionHttpCookieName] != null)
-                {
-                    this.SessionRedisHashKey = RedisSessionStateStoreProvider.RedisHashIdFromSessionId(
-                        this.RequestContext,
-                        this.RequestContext.Request.Cookies[RedisSessionConfig.SessionHttpCookieName].Value);
-                }
+                if (GetSessionCookie() != null)
+                    this.SessionRedisHashKey = RedisSessionStateStoreProvider.RedisHashIdFromSessionId(this.RequestContext, GetSessionId());
 
                 if (!string.IsNullOrEmpty(this.SessionRedisHashKey))
-                {
-                    RedisSessionStateItemCollection items =
-                        this.SharedSessions.GetSessionForBeginRequest(
-                            this.SessionRedisHashKey,
-                            (string redisKey) =>
-                            {
-                                return RedisSessionStateStoreProvider.GetItemFromRedis(
-                                    redisKey,
-                                    this.RequestContext,
-                                    RedisSessionConfig.SessionTimeout);
-                            });
-
-                    this.Session = new FakeHttpSessionState(
-                        items, 
-                        this.RequestContext.Request.Cookies[RedisSessionConfig.SessionHttpCookieName].Value);
-                }
+                    this.Session = new FakeHttpSessionState(SharedSessions.GetSessionItems(context, this.SessionRedisHashKey), GetSessionId());
             }
-            catch(Exception exc)
+            catch (Exception exc)
             {
-                if(RedisSessionConfig.RedisSessionAccessorExceptionLoggingDel != null)
-                {
-                    string errMsg = string.Format(
-                        "RedisSessionAccessor unable to get Redis session for id: {0}", 
-                        this.SessionRedisHashKey);
-
-                    RedisSessionConfig.RedisSessionAccessorExceptionLoggingDel(
-                        context,
-                        errMsg,
-                        exc);
-                }
+                LogException(context, exc);
             }
+        }
+
+        private void LogException(HttpContextBase context, Exception ex)
+        {
+            if (RedisSessionConfig.RedisSessionAccessorExceptionLoggingDel != null)
+                RedisSessionConfig.RedisSessionAccessorExceptionLoggingDel(context, "RedisSessionAccessor unable to get Redis session for id: " + this.SessionRedisHashKey, ex);
+        }
+
+        private string GetSessionId()
+        {
+            return GetSessionCookie().Value;
+        }
+
+        private HttpCookie GetSessionCookie()
+        {
+            return RequestContext.Request.Cookies[RedisSessionConfig.SessionHttpCookieName];
         }
 
         /// <summary>
@@ -168,7 +150,7 @@
             {
                 get
                 {
-                    return this.sessionID;   
+                    return this.sessionID;
                 }
             }
         }

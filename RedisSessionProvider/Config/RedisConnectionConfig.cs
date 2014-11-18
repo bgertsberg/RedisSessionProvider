@@ -1,14 +1,10 @@
-﻿namespace RedisSessionProvider.Config
+﻿using StackExchange.Redis;
+using System;
+using System.Collections.Generic;
+using System.Web;
+
+namespace RedisSessionProvider.Config
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Linq;
-    using System.Text;
-    using System.Threading.Tasks;
-    using System.Web;
-
-    using StackExchange.Redis;
-
     public static class RedisConnectionConfig
     {
         static RedisConnectionConfig()
