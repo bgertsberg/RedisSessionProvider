@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Linq;
+using System.Text;
 using System.Timers;
 
 namespace RedisSessionProvider.Redis
@@ -15,7 +16,7 @@ namespace RedisSessionProvider.Redis
         
         private static System.Timers.Timer connMessagesSentTimer;
         
-        private static object RedisCreateLock = new object();
+        private static Partitioner partitioner;
 
         static RedisConnectionWrapper()
         {
@@ -24,17 +25,7 @@ namespace RedisSessionProvider.Redis
             connMessagesSentTimer.Start();
         }
 
-        /// <summary>
-        /// Gets or sets the parameters to use when connecting to a redis server
-        /// </summary>
-        private ConfigurationOptions connData;
-
-        /// <summary>
-        /// A string identifier for the connection, which will be used as the connection's key in the
-        ///     this.RedisConnections dictionary.
-        /// </summary>
-        public string ConnectionID { get; set; }
-
+        
         /// <summary>
         /// The index of Database to store session.
         /// </summary>
@@ -47,10 +38,8 @@ namespace RedisSessionProvider.Redis
         /// <param name="serverAddress">The ip address of the redis instance</param>
         /// <param name="serverPort">The port number of the redis instance</param>
         public RedisConnectionWrapper(string srvAddr, int srvPort)
+            : this(GetConnectionID(srvAddr, srvPort), ConfigurationOptions.Parse(srvAddr + ":" + srvPort))
         {
-            this.connData = ConfigurationOptions.Parse(srvAddr + ":" + srvPort);
-
-            this.ConnectionID = GetConnectionID(srvAddr, srvPort);
         }
 
         private static string GetConnectionID(string srvAddr, int srvPort)
@@ -64,15 +53,11 @@ namespace RedisSessionProvider.Redis
         /// </summary>
         /// <param name="redisParams">A configuration class containing the redis server hostname and port number</param>
         public RedisConnectionWrapper(RedisConnectionParameters redisParams)
+            : this(GetConnectionID(redisParams.ServerAddress, redisParams.ServerPort), redisParams.DatabaseIndex, redisParams.TranslateToConfigOpts())
         {
-            if (redisParams == null)
-                throw new ConfigurationErrorsException("RedisConnectionWrapper cannot be initialized with null RedisConnectionParameters property");
-
-            this.connData = redisParams.TranslateToConfigOpts();
-
-            this.ConnectionID = GetConnectionID(redisParams.ServerAddress, redisParams.ServerPort);
-            this.DatabaseIndex = redisParams.DatabaseIndex;
         }
+
+        
 
         /// <summary>
         /// Initializes a new instance of the RedisConnectionWrapper class, which contains methods for accessing
@@ -95,13 +80,23 @@ namespace RedisSessionProvider.Redis
         /// <param name="dbIndex">The index of the redis database with session information</param>
         /// <param name="connOpts">A StackExchange.Redis configuration class containing the redis connection info</param>
         public RedisConnectionWrapper(string connIdentifier, int dbIndex, ConfigurationOptions connOpts)
+            : this(new KeyValuePair<string, ConfigurationOptions>[] { new KeyValuePair<string, ConfigurationOptions>(connIdentifier, connOpts) }, dbIndex)
+        {
+        }
+
+        public RedisConnectionWrapper(IEnumerable<KeyValuePair<string,ConfigurationOptions>> connOpts, int dbIndex=0)
         {
             if (connOpts == null)
                 throw new ConfigurationErrorsException("RedisConnectionWrapper cannot be initialized with null ConfigurationOptions property");
 
-            this.connData = connOpts;
+            var list=connOpts.ToArray();
+
+            partitioner = new Partitioner(list.Select(kv => kv.Key), data => MurMurHash3.Hash(data));
+            foreach (var kv in list)
+                RedisConnectionWrapper.RedisConnections.Add(kv.Key, ConnectionMultiplexer.Connect(kv.Value));
+
             this.DatabaseIndex = dbIndex;
-            this.ConnectionID = connIdentifier;
+            
         }
 
         /// <summary>
@@ -110,16 +105,14 @@ namespace RedisSessionProvider.Redis
         /// </summary>
         /// <returns>An open and callable RedisConnection object, shared with other threads in this
         /// application domain that also called for a connection to the specified ip and port</returns>
-        public IDatabase GetConnection()
+        public IDatabase GetConnection(string redisKey)
         {
-            if (!RedisConnectionWrapper.RedisConnections.ContainsKey(this.ConnectionID))
-                lock(RedisConnectionWrapper.RedisCreateLock)
-                {
-                    if (!RedisConnectionWrapper.RedisConnections.ContainsKey(this.ConnectionID))
-                        RedisConnectionWrapper.RedisConnections.Add(this.ConnectionID,ConnectionMultiplexer.Connect(this.connData));
-                }
+            return RedisConnectionWrapper.RedisConnections[GetConnectionId(redisKey)].GetDatabase(this.DatabaseIndex);
+        }
 
-            return RedisConnectionWrapper.RedisConnections[this.ConnectionID].GetDatabase(this.DatabaseIndex);
+        public static string GetConnectionId(string redisKey)
+        {
+            return partitioner.GetNode(Encoding.UTF8.GetBytes(redisKey));
         }
         
         /// <summary>

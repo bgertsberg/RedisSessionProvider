@@ -62,14 +62,10 @@ namespace RedisSessionProvider
 
     public class MurmurHash2
     {
-        public static UInt32 Hash(Byte[] data)
-        {
-            return Hash(data, 0xc58f1a7b);
-        }
         const UInt32 m = 0x5bd1e995;
         const Int32 r = 24;
 
-        public static UInt32 Hash(Byte[] data, UInt32 seed)
+        public static UInt32 Hash(Byte[] data, UInt32 seed=0)
         {
             Int32 length = data.Length;
             if (length == 0)
@@ -124,9 +120,8 @@ namespace RedisSessionProvider
     public static class MurMurHash3
     {
         //Change to suit your needs
-        const uint seed = 144;
-
-        public static uint Hash(byte[] data)
+        
+        public static uint Hash(byte[] data,uint seed=0)
         {
             const uint c1 = 0xcc9e2d51;
             const uint c2 = 0x1b873593;
@@ -155,34 +150,29 @@ namespace RedisSessionProvider
                 length -= 4;
             }
             currentIndex *= 4;
-            
-            switch (length)
+
+            if (length > 0)
             {
-                case 3:
-                    k1 = (uint) (data[currentIndex++] | data[currentIndex++] << 8 | data[currentIndex] << 16);
-                    k1 *= c1;
-                    k1 = rotl32(k1, 15);
-                    k1 *= c2;
-                    h1 ^= k1;
-                    break;
-                case 2:
-                    k1 = (uint) (data[currentIndex++] | data[currentIndex] << 8);
-                    k1 *= c1;
-                    k1 = rotl32(k1, 15);
-                    k1 *= c2;
-                    h1 ^= k1;
-                    break;
-                case 1:
-                    k1 = (uint)(data[currentIndex]);
-                    k1 *= c1;
-                    k1 = rotl32(k1, 15);
-                    k1 *= c2;
-                    h1 ^= k1;
-                    break;
+                switch (length)
+                {
+                    case 3:
+                        k1 = (uint)(data[currentIndex++] | data[currentIndex++] << 8 | data[currentIndex] << 16);
+                        break;
+                    case 2:
+                        k1 = (uint)(data[currentIndex++] | data[currentIndex] << 8);
+                        break;
+                    case 1:
+                        k1 = (uint)(data[currentIndex]);
+                        break;
+                }
+                k1 *= c1;
+                k1 = rotl32(k1, 15);
+                k1 *= c2;
+                h1 ^= k1;
             }
 
             // finalization, magic chants to wrap it all up
-            h1 ^= (uint)currentIndex;
+            h1 ^= (uint)data.Length;
             return fmix(h1);
         }
 

@@ -217,10 +217,10 @@ namespace RedisSessionProvider
         public override void RemoveItem(HttpContext context, string id, object lockId, SessionStateStoreData item)
         {
             RedisConnectionWrapper rConnWrap = RedisConnWrapperFromContext(new HttpContextWrapper(context));
+            var redisKey = RedisHashIdFromSessionId(new HttpContextWrapper(context), id);
+            IDatabase redisConn = rConnWrap.GetConnection(redisKey);
 
-            IDatabase redisConn = rConnWrap.GetConnection();
-
-            redisConn.KeyDelete(RedisHashIdFromSessionId(new HttpContextWrapper(context), id), CommandFlags.FireAndForget);
+            redisConn.KeyDelete(redisKey, CommandFlags.FireAndForget);
         }
 
         /// <summary>
@@ -274,7 +274,7 @@ namespace RedisSessionProvider
         {
             RedisConnectionWrapper rConnWrap = RedisSessionStateStoreProvider.RedisConnWrapperFromContext(context);
 
-            IDatabase redisConn = rConnWrap.GetConnection();
+            IDatabase redisConn = rConnWrap.GetConnection(redisKey);
 
             try
             {
@@ -282,7 +282,7 @@ namespace RedisSessionProvider
 
                 redisConn.KeyExpire(redisKey, expirationTimeout, CommandFlags.FireAndForget);
 
-                return new RedisSessionStateItemCollection(redisData, rConnWrap.ConnectionID, 0);
+                return new RedisSessionStateItemCollection(redisData, redisKey, 0);
             }
             catch (Exception e)
             {
@@ -317,7 +317,7 @@ namespace RedisSessionProvider
                 else
                     delItems.Add(changedObj.Key);
 
-            IDatabase redisConn = rConnWrap.GetConnection();
+            IDatabase redisConn = rConnWrap.GetConnection(currentRedisHashId);
 
             if (setItems.Count > 0)
             {

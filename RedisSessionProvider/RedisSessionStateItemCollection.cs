@@ -62,8 +62,8 @@ namespace RedisSessionProvider
 
         [Obsolete("This constructor is no longer used within RedisSessionProvider, since moving to StackExchange.Redis"
             + " as a redis client library returns arrays of keyvaluepairs instead of dictionaries for HashGetAll")]
-        public RedisSessionStateItemCollection(Dictionary<string, byte[]> redisHashData, string redisConnName) :
-            this(redisHashData.Select(kv => new HashEntry(kv.Key, Encoding.UTF8.GetString(kv.Value))).ToArray(), redisConnName, 0)
+        public RedisSessionStateItemCollection(Dictionary<string, byte[]> redisHashData, string redisKey) :
+            this(redisHashData.Select(kv => new HashEntry(kv.Key, Encoding.UTF8.GetString(kv.Value))).ToArray(), redisKey, 0)
         {
 
         }
@@ -74,19 +74,19 @@ namespace RedisSessionProvider
         /// </summary>
         /// <param name="redisHashData">An array of keys to values from the redis hash</param>
         /// <param name="redisConnName">The name of the connection from the redis connection wrapper</param>
-        public RedisSessionStateItemCollection(HashEntry[] redisHashData, string redisConnName, byte constructorSignatureDifferentiator)
+        public RedisSessionStateItemCollection(HashEntry[] redisHashData, string redisKey, byte constructorSignatureDifferentiator)
         {
-            int byteDataTotal = 0;
-            int concLevel = RedisSessionConfig.SessionAccessConcurrencyLevel;
-            if (concLevel < 1)
-                concLevel = 1;
+            int concLevel = Math.Max(RedisSessionConfig.SessionAccessConcurrencyLevel, 1);
             int numItems = redisHashData != null ? redisHashData.Length : 0;
 
+            Items = new ConcurrentDictionary<string, object>(concLevel, numItems);
+            SerializedRawData = new ConcurrentDictionary<string, string>(concLevel, numItems);
+            ChangedKeysDict = new ConcurrentDictionary<string, ActionAndValue>();
+            Serializer = RedisSerializationConfig.SessionDataSerializer;
 
-            this.Items = new ConcurrentDictionary<string, object>(concLevel, numItems);
-            this.SerializedRawData = new ConcurrentDictionary<string, string>(concLevel, numItems);
-            if (redisHashData != null)
+            if (numItems > 0)
             {
+                int byteDataTotal = 0;
                 foreach (var sessDataEntry in redisHashData)
                 {
                     string hashItemKey = sessDataEntry.Name.ToString();
@@ -97,17 +97,13 @@ namespace RedisSessionProvider
 
                     byteDataTotal += hashItemValue.Length;
                 }
+
+                if (byteDataTotal > 0 && !string.IsNullOrEmpty(redisKey) && RedisConnectionConfig.LogRedisSessionSize != null)
+                    RedisConnectionConfig.LogRedisSessionSize(RedisSessionProvider.Redis.RedisConnectionWrapper.GetConnectionId(redisKey), byteDataTotal);
+
+                if (byteDataTotal > RedisConnectionConfig.MaxSessionByteSize)
+                    RedisConnectionConfig.RedisSessionSizeExceededHandler(this, byteDataTotal);
             }
-
-            this.ChangedKeysDict = new ConcurrentDictionary<string, ActionAndValue>();
-
-            if (byteDataTotal != 0 && !string.IsNullOrEmpty(redisConnName) && RedisConnectionConfig.LogRedisSessionSize != null)
-                RedisConnectionConfig.LogRedisSessionSize(redisConnName, byteDataTotal);
-
-            this.Serializer = RedisSerializationConfig.SessionDataSerializer;
-
-            if (byteDataTotal > RedisConnectionConfig.MaxSessionByteSize)
-                RedisConnectionConfig.RedisSessionSizeExceededHandler(this, byteDataTotal);
         }
 
 
