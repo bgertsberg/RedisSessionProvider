@@ -42,18 +42,18 @@
                     MvcApplication.redisConfigOpts);
             };
 
-            // deprecated old method, but will work if GetSERedisServerConfig is null
-            RedisConnectionConfig.GetRedisServerAddress = (HttpContextBase context) =>
-            {
-                return new RedisConnectionParameters()
-                {
-                    ServerAddress = "10.224.61.240",
-                    //ServerPort = 1000,            // raw
-                    ServerPort = 22122,             // TwemProxy
-                    UseProxy = Proxy.Twemproxy,     // more TwemProxy
-                    ServerVersion = "2.6.14"                    
-                };
-            };
+            //// deprecated old method, but will work if GetSERedisServerConfig is null
+            //RedisConnectionConfig.GetRedisServerAddress = (HttpContextBase context) =>
+            //{
+            //    return new RedisConnectionParameters()
+            //    {
+            //        ServerAddress = "10.224.61.240",
+            //        //ServerPort = 1000,            // raw
+            //        ServerPort = 22122,             // TwemProxy
+            //        UseProxy = Proxy.Twemproxy,     // more TwemProxy
+            //        ServerVersion = "2.6.14"                    
+            //    };
+            //};
 
             RedisSessionConfig.SessionExceptionLoggingDel = (Exception e) => 
             {

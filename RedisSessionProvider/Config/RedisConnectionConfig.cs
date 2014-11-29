@@ -57,38 +57,5 @@ namespace RedisSessionProvider.Config
         /// </summary>
         public static int MaxSessionByteSize { get; set; }
 
-        #region Deprecated
-        [Obsolete("Due to a change in Redis clients starting in v1.2.0, RedisSessionProvider now only" +
-            " logs total actions taken (both sends and receives) via the LogConnectionActionsCountDel property")]
-        public static Action<string, int> LogRedisCommandsSentDel
-        {
-            get
-            {
-                return null;
-            }
-            set
-            {
-            }
-        }
-
-        [Obsolete("Due to a change in Redis clients starting in v1.2.0, RedisSessionProvider now only" +
-            " logs total actions taken (both sends and receives) via the LogConnectionActionsCountDel property")]
-        public static Action<string, int> LogRedisCommandsReceivedDel
-        {
-            get
-            {
-                return null;
-            }
-            set
-            {
-            }
-        }
-
-        [Obsolete("Due to a change in Redis clients, v1.2.1 of RedisSessionProvider now prefers to use the" +
-            " StackExchange.Redis ConfigurationOptions class for handling Redis connection data. This method will" +
-            " still work if GetSERedisServerConfig is not set, however, we strongly advise you to switch since it" +
-            " will allow you to store your connection configuration in one format.")]
-        public static Func<HttpContextBase, RedisConnectionParameters> GetRedisServerAddress = null;
-        #endregion
     }
 }

@@ -1,14 +1,9 @@
-﻿namespace RedisSessionProvider.Config
+﻿using StackExchange.Redis;
+using System;
+using System.Web;
+
+namespace RedisSessionProvider.Config
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Linq;
-    using System.Text;
-    using System.Threading.Tasks;
-    using System.Web;
-    using System.Web.Configuration;
-    using System.Web.Hosting;
-    using StackExchange.Redis;
 
     /// <summary>
     /// This class contains settings for how the classes that hold the Session behave, after data
@@ -16,32 +11,12 @@
     /// </summary>
     public static class RedisSessionConfig
     {
-        static RedisSessionConfig()
-        {
-            RedisSessionConfig.SessionAccessConcurrencyLevel = 1;
-
-            // not essential, used by RedisSessionAccessor
-            try
-            {
-                // Get <sessionState> configuration element from web.config, store the cookie name
-                System.Configuration.Configuration webCfg = WebConfigurationManager.OpenWebConfiguration(
-                    HostingEnvironment.ApplicationVirtualPath);
-                SessionStateSection sessCfg = (SessionStateSection)webCfg.GetSection("system.web/sessionState");
-
-                RedisSessionConfig.SessionHttpCookieName = sessCfg.CookieName;
-                RedisSessionConfig.SessionTimeout = sessCfg.Timeout;
-            }
-            catch(Exception)
-            {
-            }
-        }
-
+        
         /// <summary>
         /// A delegate that is called when RedisSessionProvider.RedisSessionStateStoreProvider encounters
         ///     an error during the retrieval or setting of a Session
         /// </summary>
         public static Action<Exception> SessionExceptionLoggingDel { get; set; }
-
         public static void LogSessionException(Exception ex)
         {
             if (SessionExceptionLoggingDel != null)

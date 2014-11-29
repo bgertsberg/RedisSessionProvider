@@ -1,4 +1,5 @@
 ﻿using RedisSessionProvider.Config;
+using RedisSessionProvider.Partition;
 using StackExchange.Redis;
 using System;
 using System.Collections.Generic;
@@ -16,7 +17,7 @@ namespace RedisSessionProvider.Redis
         
         private static System.Timers.Timer connMessagesSentTimer;
         
-        private static Partitioner partitioner;
+        private static KetamaPartitioner partitioner;
 
         static RedisConnectionWrapper()
         {
@@ -91,7 +92,7 @@ namespace RedisSessionProvider.Redis
 
             var list=connOpts.ToArray();
 
-            partitioner = new Partitioner(list.Select(kv => kv.Key), data => MurMurHash3.Hash(data));
+            partitioner = new KetamaPartitioner(list.Select(kv => kv.Key), data => MurmurHash2.Hash(data));
             foreach (var kv in list)
                 RedisConnectionWrapper.RedisConnections.Add(kv.Key, ConnectionMultiplexer.Connect(kv.Value));
 

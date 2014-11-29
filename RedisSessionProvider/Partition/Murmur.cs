@@ -1,53 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace RedisSessionProvider
+namespace RedisSessionProvider.Partition
 {
-    public class Partitioner
-    {
-        private Dictionary<UInt32, string> ring = new Dictionary<uint, string>();
-        private UInt32[] tokens;
-        private Func<byte[], uint> HashFunc;
-
-        public Partitioner(IEnumerable<string> nodes, Func<byte[],uint> hashFunc)
-        {
-            HashFunc = hashFunc;
-            foreach (var node in nodes)
-                for (int i = 0; i < 10; i++)
-                    ring.Add(HashFunc(Encoding.UTF8.GetBytes(string.Concat(node, "_", i.ToString()))), node);
-
-            tokens = ring.Keys.ToArray();
-            Array.Sort(tokens);
-        }
-
-        public string GetNode(byte[] key)
-        {
-            var hash=HashFunc(key);
-            return ring[tokens[FindIndex(hash)]];
-        }
-
-        private int FindIndex(uint hash)
-        {
-            int start = 0;
-            int end = tokens.Length - 1;
-            if (hash < tokens[0] || hash >= tokens[tokens.Length - 1])
-                return tokens.Length - 1;
-
-            while (end - start > 1)
-            {
-                var half = (start + end) / 2;
-                if (hash < half)
-                    end=half;
-                else
-                    start=half;
-            }
-            return start;
-        }
-    }
 
     [StructLayout(LayoutKind.Explicit)]
     struct BytetoUInt32Converter
@@ -65,7 +20,7 @@ namespace RedisSessionProvider
         const UInt32 m = 0x5bd1e995;
         const Int32 r = 24;
 
-        public static UInt32 Hash(Byte[] data, UInt32 seed=0)
+        public static UInt32 Hash(Byte[] data, UInt32 seed = 0)
         {
             Int32 length = data.Length;
             if (length == 0)
@@ -120,20 +75,20 @@ namespace RedisSessionProvider
     public static class MurMurHash3
     {
         //Change to suit your needs
-        
-        public static uint Hash(byte[] data,uint seed=0)
+
+        public static uint Hash(byte[] data, uint seed = 0)
         {
             const uint c1 = 0xcc9e2d51;
             const uint c2 = 0x1b873593;
 
             uint h1 = seed;
             uint k1 = 0;
-            
+
             Int32 currentIndex = 0;
             UInt32[] hackArray = new BytetoUInt32Converter { Bytes = data }.UInts;
             Int32 length = data.Length;
 
-            while (length>= 4)
+            while (length >= 4)
             {
                 /* Get four bytes from the input into an uint */
                 k1 = hackArray[currentIndex++];
@@ -146,7 +101,7 @@ namespace RedisSessionProvider
                 h1 ^= k1;
                 h1 = rotl32(h1, 13);
                 h1 = h1 * 5 + 0xe6546b64;
-                
+
                 length -= 4;
             }
             currentIndex *= 4;

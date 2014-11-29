@@ -10,6 +10,7 @@ using System.Web;
 using System.Web.Configuration;
 using System.Web.Hosting;
 using System.Web.SessionState;
+using System.Linq;
 
 namespace RedisSessionProvider
 {
@@ -22,17 +23,10 @@ namespace RedisSessionProvider
     public class RedisSessionStateStoreProvider : SessionStateStoreProviderBase
     {
         /// <summary>
-        /// Gets or sets the time an entry lives in Redis. Expiration times for keys are set at the
-        ///     beginning and end of each web request (in GetItemExclusive and 
-        ///     SetAndReleaseItemExclusive). The value of this variable will always correspond to
-        ///     the timeout property of the SessionState configuration element in web.config
-        /// </summary>
-        protected virtual TimeSpan SessionTimeout { get; set; }
-
-        /// <summary>
         /// The serializer from the RedisSerializationConfig to use
         /// </summary>
-        private IRedisSerializer cereal;
+        private IRedisSerializer serializer;
+        private static RedisConnectionWrapper connection;
 
         /// <summary>
         /// Initializes the RedisSessionStateStoreProvider, reading in settings from the web.config
@@ -59,14 +53,40 @@ namespace RedisSessionProvider
             //      might as well initialize the base with the description attribute and application name
             base.Initialize(name, config);
 
-            // Get <sessionState> configuration element.
-            System.Configuration.Configuration webCfg = WebConfigurationManager.OpenWebConfiguration(
-                HostingEnvironment.ApplicationVirtualPath);
-            SessionStateSection sessCfg = (SessionStateSection)webCfg.GetSection("system.web/sessionState");
+            var webCfg = WebConfigurationManager.OpenWebConfiguration(HostingEnvironment.ApplicationVirtualPath);
 
-            this.SessionTimeout = sessCfg.Timeout;
+            ConfigureSessionOptions(webCfg.GetSection("system.web/sessionState") as SessionStateSection);
+            ConfigureRedisServers(webCfg.GetSection(ServerConfigSection.Name) as ServerConfigSection, config);
 
-            this.cereal = RedisSerializationConfig.SessionDataSerializer;
+            this.serializer = RedisSerializationConfig.SessionDataSerializer;
+        }
+
+        private void ConfigureSessionOptions(SessionStateSection sessCfg)
+        {
+            RedisSessionConfig.SessionAccessConcurrencyLevel = 1;
+
+            try
+            {
+                // Get <sessionState> configuration element from web.config, store the cookie name
+                RedisSessionConfig.SessionHttpCookieName = sessCfg.CookieName;
+                RedisSessionConfig.SessionTimeout = sessCfg.Timeout;
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private void ConfigureRedisServers(ServerConfigSection serverConfig, NameValueCollection config)
+        {
+            int database;
+            if (!int.TryParse(config["database"] ?? "0", out database))
+                database = 0;
+            try
+            {
+                if (serverConfig != null && serverConfig.Hosts != null)
+                    connection = new RedisConnectionWrapper(serverConfig.Hosts.Cast<RedisHostConfiguration>().Select(host => host.GetConnectionInformation()), database);
+            }
+            catch { }
         }
 
         /// <summary>
@@ -174,14 +194,14 @@ namespace RedisSessionProvider
 
             try
             {
-                return new SessionStateStoreData(GetSessionItems(context, id), SessionStateUtility.GetSessionStaticObjects(context), Convert.ToInt32(this.SessionTimeout.TotalMinutes));
+                return new SessionStateStoreData(GetSessionItems(context, id), SessionStateUtility.GetSessionStaticObjects(context), Convert.ToInt32(RedisSessionConfig.SessionTimeout.TotalMinutes));
             }
             catch (Exception e)
             {
                 RedisSessionConfig.LogSessionException(e);
             }
 
-            return CreateNewStoreData(context, Convert.ToInt32(this.SessionTimeout.TotalMinutes));
+            return CreateNewStoreData(context, Convert.ToInt32(RedisSessionConfig.SessionTimeout.TotalMinutes));
         }
 
         private static RedisSessionStateItemCollection GetSessionItems(HttpContext context, string id)
@@ -256,7 +276,7 @@ namespace RedisSessionProvider
                 var redisItems = sharedSessDict.GetSessionForEndRequest(currentRedisHashId) ?? (RedisSessionStateItemCollection)item.Items;
 
                 if (redisItems != null)
-                    SerializeToRedis(new HttpContextWrapper(context), redisItems, currentRedisHashId, this.SessionTimeout);
+                    SerializeToRedis(new HttpContextWrapper(context), redisItems, currentRedisHashId, RedisSessionConfig.SessionTimeout);
             }
             catch (Exception e)
             {
@@ -303,7 +323,6 @@ namespace RedisSessionProvider
         /// <param name="redisConn">A connection to Redis</param>
         public static void SerializeToRedis(HttpContextBase context, RedisSessionStateItemCollection redisItems, string currentRedisHashId, TimeSpan expirationTimeout)
         {
-            
             RedisConnectionWrapper rConnWrap = RedisSessionStateStoreProvider.RedisConnWrapperFromContext(context);
 
             var setItems = new List<HashEntry>();
@@ -353,6 +372,9 @@ namespace RedisSessionProvider
         /// </returns>
         public static RedisConnectionWrapper RedisConnWrapperFromContext(HttpContextBase context)
         {
+            if (connection != null)
+                return connection;
+
             if (RedisConnectionConfig.GetSERedisServerConfigDbIndex != null)
             {
                 var connData = RedisConnectionConfig.GetSERedisServerConfigDbIndex(context);
@@ -363,10 +385,6 @@ namespace RedisSessionProvider
                 var connData = RedisConnectionConfig.GetSERedisServerConfig(context);
                 return new RedisConnectionWrapper(connData.Key, connData.Value);
             }
-#pragma warning disable 0618
-            else if (RedisConnectionConfig.GetRedisServerAddress != null)
-                return new RedisConnectionWrapper(RedisConnectionConfig.GetRedisServerAddress(context));
-#pragma warning restore 0618
 
             throw new ConfigurationErrorsException("RedisSessionProvider.Config.RedisConnectionWrapper.GetSERedisServerConfig delegate not set \n see project page at: github.com/welegan/RedisSessionProvider#configuring-your-specifics");
         }

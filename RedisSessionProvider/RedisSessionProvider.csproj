@@ -60,7 +60,9 @@
     <Compile Include="Config\RedisConnectionParameters.cs" />
     <Compile Include="Config\RedisSerializationConfig.cs" />
     <Compile Include="Config\RedisSessionConfig.cs" />
-    <Compile Include="Partitioner.cs" />
+    <Compile Include="Config\ServerConfigSection.cs" />
+    <Compile Include="Partition\Murmur.cs" />
+    <Compile Include="Partition\Partitioner.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RedisSessionAccessor.cs" />
     <Compile Include="RedisSessionStateItemCollection.cs" />
