@@ -1,6 +1,7 @@
 ﻿
 using NUnit.Framework;
 using RedisSessionProvider;
+using RedisSessionProvider.Partition;
 using System;
 using System.Collections.Generic;
 using System.Linq;
