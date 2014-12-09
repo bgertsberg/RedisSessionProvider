@@ -21,6 +21,8 @@ namespace RedisSessionProvider.Config
         {
             if (SessionExceptionLoggingDel != null)
                 SessionExceptionLoggingDel(ex);
+
+            System.Diagnostics.Trace.TraceError(ex.ToString());
         }
 
         /// <summary>

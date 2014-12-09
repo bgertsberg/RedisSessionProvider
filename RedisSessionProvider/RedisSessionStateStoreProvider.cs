@@ -372,21 +372,32 @@ namespace RedisSessionProvider
         /// </returns>
         public static RedisConnectionWrapper RedisConnWrapperFromContext(HttpContextBase context)
         {
-            if (connection != null)
-                return connection;
-
-            if (RedisConnectionConfig.GetSERedisServerConfigDbIndex != null)
+            if (connection == null)
             {
-                var connData = RedisConnectionConfig.GetSERedisServerConfigDbIndex(context);
-                return new RedisConnectionWrapper(connData.Item1, connData.Item2, connData.Item3);
-            }
-            else if (RedisConnectionConfig.GetSERedisServerConfig != null)
-            {
-                var connData = RedisConnectionConfig.GetSERedisServerConfig(context);
-                return new RedisConnectionWrapper(connData.Key, connData.Value);
-            }
+                connection = GetConnectionWrapperConfiguredByIdServerDatabase(context) ?? GetConnectionWrapperConfiguredIdServer(context);
 
-            throw new ConfigurationErrorsException("RedisSessionProvider.Config.RedisConnectionWrapper.GetSERedisServerConfig delegate not set \n see project page at: github.com/welegan/RedisSessionProvider#configuring-your-specifics");
+                if (connection == null)
+                    throw new ConfigurationErrorsException("RedisSessionProvider.Config.RedisConnectionWrapper.GetSERedisServerConfig delegate not set \n see project page at: github.com/welegan/RedisSessionProvider#configuring-your-specifics");
+            }
+            return connection;
+        }
+
+        private static RedisConnectionWrapper GetConnectionWrapperConfiguredByIdServerDatabase(HttpContextBase context)
+        {
+            if (RedisConnectionConfig.GetSERedisServerConfigDbIndex == null)
+                return null;
+
+            var connData = RedisConnectionConfig.GetSERedisServerConfigDbIndex(context);
+            return new RedisConnectionWrapper(connData.Item1, connData.Item2, connData.Item3);
+        }
+
+        private static RedisConnectionWrapper GetConnectionWrapperConfiguredIdServer(HttpContextBase context)
+        {
+            if (RedisConnectionConfig.GetSERedisServerConfig == null)
+                return null;
+
+            var connData = RedisConnectionConfig.GetSERedisServerConfig(context);
+            return new RedisConnectionWrapper(connData.Key, connData.Value);
         }
 
         /// <summary>
