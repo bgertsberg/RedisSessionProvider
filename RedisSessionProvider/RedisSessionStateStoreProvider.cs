@@ -154,24 +154,7 @@ namespace RedisSessionProvider
             return false;
         }
 
-        /// <summary>
-        /// This method is called when the Session decides that no element has been modified. Due to
-        ///     the implementation of RedisSessionProvider.RedisSessionStateItemCollection, this method
-        ///     is never called (because the .Dirty property always returns true). The reason is because
-        ///     we always dirty-check the collection in SetAndReleaseItemExclusive to ensure Session
-        ///     correctness.
-        /// </summary>
-        /// <param name="context">The HttpContext of the current web request</param>
-        /// <param name="id">The SessionId of the current request</param>
-        /// <param name="lockId">A lock around the current Session so no other web request can modify it 
-        ///     simultaneously</param>
-        public override void ReleaseItemExclusive(HttpContext context, string id, object lockId)
-        {
-            // if, for some reason, we are in this method we still want to record that we are no
-            //      longer going to use a session in local cache
-            LocalSharedSessionDictionary sharedSessDict = new LocalSharedSessionDictionary();
-            sharedSessDict.GetSessionForEndRequest(RedisHashIdFromSessionId(new HttpContextWrapper(context), id));
-        }
+  
 
         /// <summary>
         /// Gets a Session from Redis, indicating a non-exclusive lock on the Session. Note that GetItemExclusive
@@ -282,6 +265,25 @@ namespace RedisSessionProvider
             {
                 RedisSessionConfig.LogSessionException(e);
             }
+        }
+
+        /// <summary>
+        /// This method is called when the Session decides that no element has been modified. Due to
+        ///     the implementation of RedisSessionProvider.RedisSessionStateItemCollection, this method
+        ///     is never called (because the .Dirty property always returns true). The reason is because
+        ///     we always dirty-check the collection in SetAndReleaseItemExclusive to ensure Session
+        ///     correctness.
+        /// </summary>
+        /// <param name="context">The HttpContext of the current web request</param>
+        /// <param name="id">The SessionId of the current request</param>
+        /// <param name="lockId">A lock around the current Session so no other web request can modify it 
+        ///     simultaneously</param>
+        public override void ReleaseItemExclusive(HttpContext context, string id, object lockId)
+        {
+            // if, for some reason, we are in this method we still want to record that we are no
+            //      longer going to use a session in local cache
+            LocalSharedSessionDictionary sharedSessDict = new LocalSharedSessionDictionary();
+            sharedSessDict.GetSessionForEndRequest(RedisHashIdFromSessionId(new HttpContextWrapper(context), id));
         }
 
         /// <summary>

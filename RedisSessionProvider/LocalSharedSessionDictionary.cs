@@ -18,10 +18,11 @@ namespace RedisSessionProvider
     {
         private static ConcurrentDictionary<string, LocalSessionInfo> localCache = new ConcurrentDictionary<string, LocalSessionInfo>();
         private static SysTimer cacheFreshnessTimer;
+        private static ReaderWriterLockSlim rwlock = new ReaderWriterLockSlim();
 
         static LocalSharedSessionDictionary()
         {
-            cacheFreshnessTimer = new SysTimer(TimeSpan.FromSeconds(5).TotalMilliseconds);
+            cacheFreshnessTimer = new SysTimer(TimeSpan.FromSeconds(60).TotalMilliseconds);
             cacheFreshnessTimer.Elapsed += EnsureLocalCacheFreshness;
             cacheFreshnessTimer.Start();
         }
@@ -30,28 +31,37 @@ namespace RedisSessionProvider
         {
             try
             {
+                rwlock.EnterWriteLock();
+                cacheFreshnessTimer.Stop();
                 LocalSessionInfo removed;
-                foreach (string expKey in GetExpiredKeys())
+                foreach (string expKey in GetPurgableKeys())
                     localCache.TryRemove(expKey, out removed);
             }
             catch (Exception sharedDictExc)
             {
                 RedisSessionConfig.LogSessionException(sharedDictExc);
             }
+            finally
+            {
+                rwlock.ExitWriteLock();
+                cacheFreshnessTimer.Start();
+            }
         }
 
-        private static List<string> GetExpiredKeys()
+        private static List<string> GetPurgableKeys()
         {
-            var expiredKeys = new List<string>();
+            var keys = new List<string>();
 
             var expiredCutOff = DateTime.Now - RedisSessionConfig.SessionTimeout;
 
             foreach (var kv in localCache)
-                if (kv.Value.LastAccess < expiredCutOff || kv.Value.IsNotCurrentlyUsed())
-                    expiredKeys.Add(kv.Key);
+                if (kv.Value.IsNotActivelyUsed(expiredCutOff))
+                    keys.Add(kv.Key);
 
-            return expiredKeys;
+            return keys;
         }
+
+        
 
         /// <summary>
         /// Gets a session for a given redis ID, and increments the count of the number of requests
@@ -60,10 +70,18 @@ namespace RedisSessionProvider
         /// <param name="redisHashId">The id of the session in Redis</param>
         /// <param name="getDel">The delegate to run to fetch the session from Redis</param>
         /// <returns>A RedisSessionStateItemCollection for the session</returns>
- 
+
         public RedisSessionStateItemCollection GetSessionItems(HttpContextBase context, string redisHashKey)
         {
-            return localCache.AddOrUpdate(redisHashKey, redisKey => CreateNewLocalSessionInfo(context, redisKey), UpdateSessionItem).SessionData;
+            try
+            {
+                rwlock.EnterReadLock();
+                return localCache.AddOrUpdate(redisHashKey, redisKey => CreateNewLocalSessionInfo(context, redisKey), UpdateSessionItem).SessionData;
+            }
+            finally
+            {
+                rwlock.ExitReadLock();
+            }
         }
 
         private static LocalSessionInfo CreateNewLocalSessionInfo(HttpContextBase context, string redisKey)
@@ -73,10 +91,7 @@ namespace RedisSessionProvider
 
         private static LocalSessionInfo UpdateSessionItem(string redisKey, LocalSessionInfo existingItem)
         {
-            existingItem.IncrementOutstandingRequest();
-            existingItem.LastAccess = DateTime.Now;
-
-            return existingItem;
+            return existingItem.IncrementOutstandingRequest();
         }
 
         /// <summary>
@@ -89,17 +104,22 @@ namespace RedisSessionProvider
         /// <returns>A RedisSessionStateItemCollection for the session</returns>
         public RedisSessionStateItemCollection GetSessionForEndRequest(string redisHashId)
         {
-            LocalSessionInfo sessionInfo;
-            if (localCache.TryGetValue(redisHashId, out sessionInfo))
+            try
             {
-                // atomically decrease ref count, and check to see if any requests outstanding
-                sessionInfo.DecrementOutstandingRequest();
-                // the timer will clear it out within the next 5 seconds if the count goes to 0
+                rwlock.EnterReadLock();
 
-                return sessionInfo.SessionData;
+                LocalSessionInfo sessionInfo;
+                if (localCache.TryGetValue(redisHashId, out sessionInfo))
+                {
+                    // atomically decrease ref count, and check to see if any requests outstanding
+                    // the timer will clear it out within the next 5 seconds if the count goes to 0
+                    return sessionInfo.DecrementOutstandingRequest().SessionData;
+                }
+                return null;
+            }finally
+            {
+                rwlock.ExitReadLock();
             }
-
-            return null;
         }
 
         /// <summary>
@@ -129,35 +149,40 @@ namespace RedisSessionProvider
                 this.LastAccess = DateTime.Now;
             }
 
-            public void IncrementOutstandingRequest()
+            public LocalSessionInfo IncrementOutstandingRequest()
             {
                 Interlocked.Increment(ref outstandingRequests);
+                this.LastAccess = DateTime.Now;
+                return this;
+
             }
 
-            public void DecrementOutstandingRequest()
+            public LocalSessionInfo DecrementOutstandingRequest()
             {
                 Interlocked.Decrement(ref outstandingRequests);
+                this.LastAccess = DateTime.Now;
+                return this;
             }
 
             /// <summary>
             /// Gets or sets the item collection
             /// </summary>
-            public RedisSessionStateItemCollection SessionData { get; set; }
+            public RedisSessionStateItemCollection SessionData { get; private set; }
 
             /// <summary>
             /// The number of requests that have a reference to this session
             /// </summary>
             private int outstandingRequests;
 
-            public bool IsNotCurrentlyUsed()
+            public bool IsNotActivelyUsed(DateTime expiredCutOff)
             {
-                return outstandingRequests <= 0;
+                return LastAccess < expiredCutOff || outstandingRequests < 1;
             }
 
             /// <summary>
             /// The last time this session was accessed.
             /// </summary>
-            public DateTime LastAccess;
+            private DateTime LastAccess;
         }
     }
 }
