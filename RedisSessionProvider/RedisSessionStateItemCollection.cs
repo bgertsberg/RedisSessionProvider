@@ -56,14 +56,14 @@ namespace RedisSessionProvider
         /// Instantiates a new instance of the RedisSessionStateItemCollection class, with no values
         /// </summary>
         public RedisSessionStateItemCollection()
-            : this(null, null, 0)
+            : this(new HashEntry[] { }, null)
         {
         }
 
         [Obsolete("This constructor is no longer used within RedisSessionProvider, since moving to StackExchange.Redis"
             + " as a redis client library returns arrays of keyvaluepairs instead of dictionaries for HashGetAll")]
         public RedisSessionStateItemCollection(Dictionary<string, byte[]> redisHashData, string redisKey) :
-            this(redisHashData.Select(kv => new HashEntry(kv.Key, Encoding.UTF8.GetString(kv.Value))).ToArray(), redisKey, 0)
+            this(redisHashData.Select(kv => new HashEntry(kv.Key, Encoding.UTF8.GetString(kv.Value))).ToArray(), redisKey)
         {
 
         }
@@ -74,7 +74,7 @@ namespace RedisSessionProvider
         /// </summary>
         /// <param name="redisHashData">An array of keys to values from the redis hash</param>
         /// <param name="redisConnName">The name of the connection from the redis connection wrapper</param>
-        public RedisSessionStateItemCollection(HashEntry[] redisHashData, string redisKey, byte constructorSignatureDifferentiator)
+        public RedisSessionStateItemCollection(HashEntry[] redisHashData, string redisKey)
         {
             int concLevel = Math.Max(RedisSessionConfig.SessionAccessConcurrencyLevel, 1);
             int numItems = redisHashData != null ? redisHashData.Length : 0;
