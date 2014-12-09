@@ -302,7 +302,7 @@ namespace RedisSessionProvider
 
                 redisConn.KeyExpire(redisKey, expirationTimeout, CommandFlags.FireAndForget);
 
-                return new RedisSessionStateItemCollection(redisData, redisKey, 0);
+                return new RedisSessionStateItemCollection(redisData, redisKey);
             }
             catch (Exception e)
             {
